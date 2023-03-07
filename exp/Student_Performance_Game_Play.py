@@ -190,7 +190,6 @@ if __name__ == "__main__":
                 mi_topk=100,
                 base_tpe_budget=400,
                 turn_on_mi=True,
-                turn_on_mapping_func=False,
                 seed=seed
             )
             print((seed, optimal_query_list))

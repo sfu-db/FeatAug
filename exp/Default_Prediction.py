@@ -122,7 +122,7 @@ if __name__ == "__main__":
     random.seed(42)
     predicate_attrs = random.sample(agg_attrs, 20)
     print(predicate_attrs)
-    # predicate_attrs = []
+    
     groupby_keys = fkeys
     predicate_attr_types = {
         'S_2': {
@@ -186,7 +186,6 @@ if __name__ == "__main__":
             mi_topk=100,
             base_tpe_budget=400,
             turn_on_mi=True,
-            turn_on_mapping_func=False,
             seed=seed
         )
         print((seed, optimal_query_list))

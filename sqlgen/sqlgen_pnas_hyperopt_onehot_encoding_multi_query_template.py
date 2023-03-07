@@ -101,9 +101,7 @@ class SQLGen(object):
             mi_topk: int = 10,
             base_tpe_budget: Union[float, int] = 500,
             turn_on_mi: bool = True,
-            turn_on_mapping_func: bool = True,
             train_with_join_keys: bool = False,
-            mapping_func: str = "RandomForest",
             seed: int = 0,
             query_template_num: int = 4
     ) -> Optional[List]:
@@ -139,7 +137,6 @@ class SQLGen(object):
             best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=500, trials=trials,
                         rstate=np.random.default_rng(temp_seed),show_progressbar=False)
             temp_best_mi_value = trials.best_trial['result']['loss']
-            # temp_best_mi_value = best_value
             temp_mi_score_empty_set += temp_best_mi_value
         temp_mi_score_empty_set = temp_mi_score_empty_set / len(seed_list)
         print(f"MI score without any predicate attrs: {temp_mi_score_empty_set}")
@@ -174,7 +171,7 @@ class SQLGen(object):
         effective_predicate_attrs_list += all_evaluations_current_layer
         previous_layer_predicate_attrs_list = copy.deepcopy(effective_predicate_attrs_list[:2])
 
-        # Train initial predictor (MLP as the first choice)
+        # Train initial predictor (DT as the first choice)
         X_train = []
         y_train = []
         for eva in all_evaluations_current_layer:
@@ -239,7 +236,6 @@ class SQLGen(object):
                     best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=500,
                                 trials=trials, rstate=np.random.default_rng(temp_seed),show_progressbar=False)
                     temp_best_mi_value = trials.best_trial['result']['loss']
-                        # temp_best_mi_value = best_value
                     temp_mi_score += temp_best_mi_value
                 temp_mi_score = temp_mi_score / len(seed_list)
                 print(eva["predicate_attrs"], temp_mi_score)
@@ -249,7 +245,7 @@ class SQLGen(object):
                     "mi_score": temp_mi_score}
                 )
 
-            # Retrain the predictor (MLP as the first choice)
+            # Retrain the predictor (DT as the first choice)
             for eva in all_real_evaluations_current_layer:
                 temp_attrs_encoding = np.zeros(len(self.query_template.all_predicate_attrs))
                 for attr in eva["predicate_attrs"]:
@@ -261,7 +257,6 @@ class SQLGen(object):
 
             effective_predicate_attrs_list += all_real_evaluations_current_layer
             previous_layer_predicate_attrs_list = copy.deepcopy(all_real_evaluations_current_layer)
-            #print(effective_predicate_attrs_list)
 
         effective_predicate_attrs_list.append(
             {"predicate_attrs": [],
@@ -353,13 +348,7 @@ class SQLGen(object):
 
         agg_func_in_sql = self.query_template.agg_funcs[arg_dict['agg_func']]
         agg_attr_in_sql = self.query_template.agg_attrs[arg_dict['agg_attr']]
-        # predicate_attrs_label = arg_list[
-        #                         2: (len(arg_list) - len(self.query_template.groupby_keys))
-        #                         ]
-        # groupby_keys_label = arg_list[
-        #                      (len(arg_list) - len(self.query_template.groupby_keys)):
-        #                      ]
-
+       
         where_clause_in_sql = ""
         predicate_attrs_label_pos = 0
         for key in arg_dict:
@@ -439,13 +428,10 @@ class SQLGen(object):
             )
 
         new_feature = duckdb.query(feature_sql).df()
-        # new_feature = new_feature.astype("float")
-        # print(new_feature.columns)
 
         return new_feature, join_keys
 
     def _objective_func(self, params) -> Any:
-        #next_trial_param = self._suggest_next_trial(trial)
         new_feature, join_keys = self._generate_new_feature(arg_dict=params)
         new_train_data = self.base_table.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys, copy=False
@@ -465,18 +451,9 @@ class SQLGen(object):
                 clf = XGBClassifier(random_state=0)
             else:
                 clf = XGBRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.to_frame(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.to_frame())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.to_frame(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -489,18 +466,9 @@ class SQLGen(object):
                 clf = RandomForestClassifier(random_state=0, class_weight='balanced')
             else:
                 clf = RandomForestRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.values.ravel())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -513,18 +481,9 @@ class SQLGen(object):
                 clf = LogisticRegression(random_state = 0)
             else:
                 clf = LinearRegression(random_state = 0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.values.ravel())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -537,18 +496,9 @@ class SQLGen(object):
                 clf = MLPClassifier(random_state=0)
             else:
                 clf = MLPRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.values.ravel())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -587,9 +537,6 @@ class SQLGen(object):
         return mi_score
 
     def _get_real_evaluation(self, param):
-        # arg_list = []
-        # for key in param:
-        #     arg_list.append(param[key])
         new_feature, join_keys = self._generate_new_feature(arg_dict=param)
         new_train_data = self.base_table.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys, copy=False
@@ -602,7 +549,6 @@ class SQLGen(object):
         if not self.train_with_join_keys:
             new_train_data = new_train_data.drop(columns=self.query_template.fkeys)
             new_valid_data = new_valid_data.drop(columns=self.query_template.fkeys)
-        #new_train, new_valid, new_train_labels, new_valid_labels = train_test_split(new_train_data, self.labels, test_size=0.25, random_state=42)
 
         # validation score
         if self.ml_model == "xgb":
@@ -610,18 +556,9 @@ class SQLGen(object):
                 clf = XGBClassifier(random_state=0)
             else:
                 clf = XGBRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.to_frame(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.to_frame())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.to_frame(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -634,18 +571,9 @@ class SQLGen(object):
                 clf = RandomForestClassifier(random_state=0, class_weight='balanced')
             else:
                 clf = RandomForestRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.values.ravel())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -658,18 +586,9 @@ class SQLGen(object):
                 clf = LogisticRegression(random_state = 0)
             else:
                 clf = LinearRegression(random_state = 0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.values.ravel())
             new_valid_pred = clf.predict(new_valid_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -682,18 +601,9 @@ class SQLGen(object):
                 clf = MLPClassifier(random_state=0)
             else:
                 clf = MLPRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(new_train_data, self.labels.values.ravel())
             new_valid_pred = clf.predict(new_valid_data)
+            
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
             elif self.metric == 'f1_macro':
@@ -825,7 +735,7 @@ class SQLGen(object):
             chosen_groupby_key = random.choice(self.query_template.groupby_keys)
             search_space[f"groupby_keys_{chosen_groupby_key}"] = hp.choice(
                 f"groupby_keys_{chosen_groupby_key}", [1])
-            #search_space[f"groupby_keys_{self.query_template.groupby_keys[0]}"] = hp.choice(f"groupby_keys_{self.query_template.groupby_keys[0]}", [1])
+
             for groupby_key in self.query_template.groupby_keys:
                 if groupby_key != chosen_groupby_key:
                     search_space[f"groupby_keys_{groupby_key}"] = hp.choice(f"groupby_keys_{groupby_key}", [0, 1])
@@ -839,12 +749,6 @@ class SQLGen(object):
 
         agg_func_in_sql = self.query_template.agg_funcs[arg_dict['agg_func']]
         agg_attr_in_sql = self.query_template.agg_attrs[arg_dict['agg_attr']]
-        # predicate_attrs_label = arg_list[
-        #                         2: (len(arg_list) - len(self.query_template.groupby_keys))
-        #                         ]
-        # groupby_keys_label = arg_list[
-        #                      (len(arg_list) - len(self.query_template.groupby_keys)):
-        #                      ]
 
         where_clause_in_sql = ""
         predicate_attrs_label_pos = 0
@@ -922,8 +826,6 @@ class SQLGen(object):
             )
 
         new_feature = duckdb.query(feature_sql).df()
-        # new_feature = new_feature.astype("float")
-        # print(new_feature.columns)
 
         return new_feature, join_keys
 
@@ -949,16 +851,6 @@ class SQLGen(object):
         )
         return param_value_list
 
-    def _learn_mapping_func(self, observed_query_list: Optional[List] = None) -> Any:
-        X = np.array([x["mi_value"] for x in observed_query_list])
-        y = np.array([x["real_value"] for x in observed_query_list])
-        clf = RandomForestRegressor(random_state=0)
-        # clf = DecisionTreeRegressor(max_depth=2, random_state=0)
-        # clf = LinearRegression()
-        # clf = MLPRegressor(random_state=0)
-        clf.fit(X.reshape(-1, 1), y)
-        return clf
-
     def _output_trials(self, trials):
         params = list(trials[0].params.keys())
         res = {}
@@ -983,26 +875,15 @@ class SQLGen(object):
         train_data = train_data.fillna(0)
         new_test_data = new_test_data.fillna(0)
 
-        # train_data = new_train_data
-        # train_labels = self.labels
         # test score
         if self.ml_model == "xgb":
             if self.task_type == "classification":
                 clf = XGBClassifier(random_state=0)
             else:
                 clf = XGBRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.to_frame(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(train_data, train_labels)
             new_test_pred = clf.predict(new_test_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.test_labels.to_frame(), new_test_pred)
             elif self.metric == 'f1_macro':
@@ -1015,18 +896,9 @@ class SQLGen(object):
                 clf = RandomForestClassifier(random_state=0, class_weight='balanced')
             else:
                 clf = RandomForestRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(train_data, train_labels)
             new_test_pred = clf.predict(new_test_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.test_labels.values.ravel(), new_test_pred)
             elif self.metric == 'f1_macro':
@@ -1039,18 +911,9 @@ class SQLGen(object):
                 clf = LogisticRegression(random_state = 0)
             else:
                 clf = LinearRegression(random_state = 0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(train_data, train_labels)
             new_test_pred = clf.predict(new_test_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.test_labels.values.ravel(), new_test_pred)
             elif self.metric == 'f1_macro':
@@ -1063,18 +926,9 @@ class SQLGen(object):
                 clf = MLPClassifier(random_state=0)
             else:
                 clf = MLPRegressor(random_state=0)
-            # scores = cross_validate(
-            #     clf,
-            #     new_train_data,
-            #     self.labels.values.ravel(),
-            #     cv=5,
-            #     scoring=self.metric,
-            #     return_train_score=True,
-            #     n_jobs=-1,
-            #     return_estimator=True,
-            # )
             clf.fit(train_data, train_labels)
             new_test_pred = clf.predict(new_test_data)
+
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.test_labels.values.ravel(), new_test_pred)
             elif self.metric == 'f1_macro':

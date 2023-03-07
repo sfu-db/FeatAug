@@ -26,20 +26,6 @@ sys.path.insert(1, "../exp")
 def load_data():
     train = pd.read_csv("../exp_data/Household/train.csv")
 
-    # all_columns = train_data.columns
-    # for column in all_columns:
-    #     if train_data[column].isna().sum() > 900:
-    #         train_data = train_data.drop(columns=[column])
-    # train_data = train_data.drop(columns=['idhogar'])
-    #
-    # train_data['dependency'] = train_data['dependency'].map({'yes': 1, 'no': 0})
-    # train_data['edjefe'] = train_data['edjefe'].map({'yes': 1, 'no': 0})
-    # train_data['edjefa'] = train_data['edjefa'].map({'yes': 1, 'no': 0})
-    # train_data['Id'] = [(i + 1) for i in range(len(train_data))]
-    #
-    # for column in train_data.columns:
-    #     train_data[column] = train_data[column].fillna(0)
-
     # Groupby the household and figure out the number of unique values
     all_equal = train.groupby('idhogar')['Target'].apply(lambda x: x.nunique() == 1)
 
@@ -124,15 +110,8 @@ def load_data():
     identity_df = es.dataframe_dict['ind']
     household_df = es.dataframe_dict['household']
 
-    #X = train.loc[train['parentesco1'] == 1,:]
     X = household_df
     label = X.pop('Target') - 1
-    #X = X.drop(columns=['Id'])
-
-
-    #X_train, X_test, y_train, y_test = train_test_split(household_df, label, test_size=0.20, shuffle=True, random_state=0)
-
-    #print(X_train.columns)
 
     X_train, X_rem, y_train, y_rem = train_test_split(X, label, test_size=0.4, random_state=42)
     X_valid, X_test, y_valid, y_test = train_test_split(X_rem, y_rem, test_size=0.5, random_state=42)
@@ -143,9 +122,6 @@ def evaluate_test_data(
     train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model="rf"
 ):
     for query in optimal_query_list:
-        # arg_list = []
-        # for key in query["param"]:
-        #     arg_list.append(query["param"][key])
         new_feature, join_keys = sqlgen_task.generate_new_feature(arg_dict=query["param"])
         train_data = train_data.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys
@@ -185,9 +161,7 @@ if __name__ == "__main__":
     test_score_list = []
 
     fkeys = ["idhogar"]
-    # fkeys = ["user_id"]
     agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "STDDEV_POP"]
-    # agg_attrs = ["appointment_id", "sms_received"]
     agg_attrs = ['hacdor', 'hacapo', 'v14a', 'refrig', 'paredblolad', 'paredzocalo',
                'paredpreb', 'pisocemento', 'pareddes', 'paredmad',
                'paredzinc', 'paredfibras', 'paredother', 'pisomoscer', 'pisoother',
@@ -215,7 +189,7 @@ if __name__ == "__main__":
     random.seed(0)
     predicate_attrs = random.sample(agg_attrs, 20)
     print(predicate_attrs)
-    # predicate_attrs = []
+
     groupby_keys = fkeys
     predicate_attr_types = {}
     for attr in predicate_attrs:
@@ -260,7 +234,6 @@ if __name__ == "__main__":
             mi_topk=100,
             base_tpe_budget=400,
             turn_on_mi=True,
-            turn_on_mapping_func=False,
             seed=seed
         )
         print((seed, optimal_query_list))

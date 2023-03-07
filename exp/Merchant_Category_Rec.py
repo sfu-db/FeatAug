@@ -68,9 +68,6 @@ def evaluate_test_data(
     train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model="rf"
 ):
     for query in optimal_query_list:
-        # arg_list = []
-        # for key in query["param"]:
-        #     arg_list.append(query["param"][key])
         new_feature, join_keys = sqlgen_task.generate_new_feature(arg_dict=query["param"])
         train_data = train_data.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys
@@ -126,8 +123,6 @@ if __name__ == "__main__":
     predicate_attrs = random.sample(agg_attrs, 20)
     print(predicate_attrs)
 
-    # predicate_attrs = ['time_stamp']
-    # predicate_attrs = []
     groupby_keys = fkeys
     predicate_attr_types = {
         'purchase_date': {
@@ -191,7 +186,6 @@ if __name__ == "__main__":
             mi_topk=100,
             base_tpe_budget=400,
             turn_on_mi=True,
-            turn_on_mapping_func=False,
             seed=seed
         )
         print((seed, optimal_query_list))

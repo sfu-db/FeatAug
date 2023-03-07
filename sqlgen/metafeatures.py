@@ -9,18 +9,12 @@ import scipy.stats
 from scipy.linalg import LinAlgError
 import scipy.sparse
 
-# TODO use balanced accuracy!
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.utils import check_array
 from sklearn.utils.multiclass import type_of_target
 
-#from autosklearn.pipeline.components.data_preprocessing.feature_type \
-#    import FeatTypeSplit
 from .metafeature import MetaFeature, HelperFunction, DatasetMetafeatures
 
-
-# TODO Allow multiple dependencies for a metafeature
-# TODO Add HelperFunction as an object
 class HelperFunctions(object):
     def __init__(self):
         self.functions = OrderedDict()

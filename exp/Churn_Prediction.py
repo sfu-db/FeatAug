@@ -65,9 +65,6 @@ def evaluate_test_data(
     train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model="rf"
 ):
     for query in optimal_query_list:
-        # arg_list = []
-        # for key in query["param"]:
-        #     arg_list.append(query["param"][key])
         new_feature, join_keys = sqlgen_task.generate_new_feature(arg_dict=query["param"])
         train_data = train_data.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys
@@ -107,26 +104,14 @@ if __name__ == "__main__":
     seed_list = [0, 42, 89, 550, 572, 1024, 3709]
     test_score_list = []
 
-    print(len(user_log['is_auto_renew'].unique()))
-    print(len(user_log['transaction_date'].unique()))
-    print(len(user_log['membership_expire_date'].unique()))
-    print(len(user_log['is_cancel'].unique()))
-
     fkeys = ["msno"]
     agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "STDDEV_POP"]
-
-    # agg_attrs = ['num_25', 'num_50', 'num_75', 'num_985', 'num_100',
-    #              'num_unq', 'total_secs', 'payment_plan_days', 'actual_amount_paid', ]
-    # predicate_attrs = ['payment_method_id', 'is_auto_renew', 'transaction_date',
-    #                    'membership_expire_date', 'is_cancel', 'city', 'bd', 'registered_via', 'registration_init_time']
 
     agg_attrs = ['num_25', 'num_50', 'num_75', 'num_985', 'num_100',
                  'num_unq', 'total_secs', 'payment_plan_days', 'actual_amount_paid', 
                  'payment_method_id', 'is_auto_renew', 'transaction_date',
                  'membership_expire_date', 'is_cancel', 'city', 'bd', 
                  'registered_via', 'registration_init_time']
-    # predicate_attrs = ['payment_method_id', 'is_auto_renew', 'transaction_date',
-    #                    'membership_expire_date', 'is_cancel', 'city', 'bd', 'registered_via', 'registration_init_time']
     random.seed(42)
     predicate_attrs = random.sample(agg_attrs, 15)
     print(predicate_attrs)
@@ -159,46 +144,7 @@ if __name__ == "__main__":
                 "type": "float",
                 "low": min(user_log[attr].unique()),
                 "high": max(user_log[attr].unique())
-            }
-    # predicate_attr_types = {
-    #     'payment_method_id': {
-    #         "type": "categorical",
-    #         "choices": [str(x) for x in user_log['payment_method_id'].unique()] + ["None"],
-    #     },
-    #     'is_auto_renew': {
-    #         "type": "categorical",
-    #         "choices": [str(x) for x in user_log['is_auto_renew'].unique()] + ["None"],
-    #     },
-    #     'transaction_date': {
-    #         "type": "datetime",
-    #         "choices": [str(x) for x in user_log['transaction_date'].unique()] + ["None"],
-    #     },
-    #     'membership_expire_date': {
-    #         "type": "datetime",
-    #         "choices": [str(x) for x in user_log['membership_expire_date'].unique()] + ["None"],
-    #     },
-    #     'is_cancel': {
-    #         "type": "categorical",
-    #         "choices": [str(x) for x in user_log['is_cancel'].unique()] + ["None"],
-    #     },
-    #     'city': {
-    #         "type": "categorical",
-    #         "choices": [str(x) for x in user_log['city'].unique()] + ["None"],
-    #     },
-    #     'bd': {
-    #         "type": "categorical",
-    #         "choices": [str(x) for x in user_log['bd'].unique()] + ["None"],
-    #     },
-    #     'registered_via': {
-    #         "type": "categorical",
-    #         "choices": [str(x) for x in user_log['registered_via'].unique()] + ["None"],
-    #     },
-    #     'registration_init_time': {
-    #         "type": "datetime",
-    #         "choices": [str(x) for x in user_log['registration_init_time'].unique()] + ["None"],
-    #     },
-    # }
-    
+            } 
 
     time_list = []
     all_optimal_query_list = []
@@ -236,7 +182,6 @@ if __name__ == "__main__":
             mi_topk=100,
             base_tpe_budget=400,
             turn_on_mi=True,
-            turn_on_mapping_func=False,
             seed=seed
         )
         print((seed, optimal_query_list))
