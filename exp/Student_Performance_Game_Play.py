@@ -127,7 +127,7 @@ if __name__ == "__main__":
         test_score_list = []
 
         fkeys = ["session"]
-        agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "STDDEV_POP"]
+        agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "VAR_SAMP", "STDDEV_POP", "STDDEV_SAMP", "ENTROPY", "KURTOSIS", "MODE", "MAD", "MEDIAN"]
         agg_attrs = ['session', 'elapsed_time', 'event_name', 'name', 'level', 'room_coor_x',
                      'room_coor_y', 'screen_coor_x', 'screen_coor_y', 'room_fqid']
         predicate_attrs = agg_attrs
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 
         time_list = []
         all_optimal_query_list = []
-        for seed in seed_list[:]:
+        for seed in seed_list[:1]:
             start = time.time()
             query_template = QueryTemplate(
                 fkeys=fkeys,
@@ -190,7 +190,9 @@ if __name__ == "__main__":
                 mi_topk=100,
                 base_tpe_budget=400,
                 turn_on_mi=True,
-                seed=seed
+                turn_on_mapping_func=False,
+                seed=seed,
+                query_template_num=8
             )
             print((seed, optimal_query_list))
             all_optimal_query_list.append((seed, optimal_query_list))
@@ -207,8 +209,8 @@ if __name__ == "__main__":
         for single_time in time_list:
             print(single_time)
 
-    avg_score = 0
-    for question_number in range(1, 19):
-        avg_score += (data_number_of_each_question[question_number] / sum(data_number_of_each_question)) * \
-                     score_of_each_question[question_number]
-    print(f'Final Avg Score: {avg_score}')
+    # avg_score = 0
+    # for question_number in range(1, 19):
+    #     avg_score += (data_number_of_each_question[question_number] / sum(data_number_of_each_question)) * \
+    #                  score_of_each_question[question_number]
+    # print(f'Final Avg Score: {avg_score}')

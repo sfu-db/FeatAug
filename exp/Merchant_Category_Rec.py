@@ -30,7 +30,7 @@ def load_data():
     new_transactions = pd.read_csv("../exp_data/Merchant_Category_Rec/new_merchant_transactions.csv")
 
     random.seed(42)
-    sampled_card_id = random.sample(train['card_id'].unique().tolist(), 10000)
+    sampled_card_id = random.sample(train['card_id'].unique().tolist(), 50000)
     sampled_train = train[train['card_id'].isin(sampled_card_id)]
     sampled_histocial_transactions = historical_transactions[historical_transactions['card_id'].isin(sampled_card_id)]
     sampled_new_transactions = new_transactions[new_transactions['card_id'].isin(sampled_card_id)]
@@ -41,10 +41,15 @@ def load_data():
     sampled_histocial_transactions = sampled_histocial_transactions.merge(sampled_merchants, how='left',
                                                                           on='merchant_id')
     all_columns = sampled_histocial_transactions.columns
+    log_to_drop = [x for x in all_columns if x.endswith('_dup')]
+    sampled_histocial_transactions = sampled_histocial_transactions.drop(columns=log_to_drop)
+    
     from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder()
     for column in all_columns:
         if column in ['card_id', 'purchase_date']:
+            continue
+        if column in log_to_drop:
             continue
         elif sampled_histocial_transactions[column].dtype not in ['float64', 'int64']:
             print(column)
@@ -68,6 +73,9 @@ def evaluate_test_data(
     train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model="rf"
 ):
     for query in optimal_query_list:
+        # arg_list = []
+        # for key in query["param"]:
+        #     arg_list.append(query["param"][key])
         new_feature, join_keys = sqlgen_task.generate_new_feature(arg_dict=query["param"])
         train_data = train_data.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys
@@ -107,7 +115,7 @@ if __name__ == "__main__":
 
     fkeys = ["card_id"]
     # fkeys = ["user_id"]
-    agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "STDDEV_POP"]
+    agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "VAR_SAMP", "STDDEV_POP", "STDDEV_SAMP", "ENTROPY", "KURTOSIS", "MODE", "MAD", "MEDIAN"]
     agg_attrs = ['authorized_flag', 'city_id_x', 'category_1_x',
        'installments', 'category_3', 'merchant_category_id_x', 'merchant_id',
        'month_lag', 'purchase_amount', 'purchase_date', 'category_2_x',
@@ -120,9 +128,11 @@ if __name__ == "__main__":
        'active_months_lag12', 'category_4', 'city_id_y', 'state_id_y',
        'category_2_y']
     random.seed(42)
-    predicate_attrs = random.sample(agg_attrs, 20)
+    predicate_attrs = random.sample(agg_attrs, 15)
     print(predicate_attrs)
 
+    # predicate_attrs = ['time_stamp']
+    # predicate_attrs = []
     groupby_keys = fkeys
     predicate_attr_types = {
         'purchase_date': {
@@ -152,7 +162,7 @@ if __name__ == "__main__":
 
     time_list = []
     all_optimal_query_list = []
-    for seed in seed_list[:]:
+    for seed in seed_list[:1]:
         start = time.time()
         query_template = QueryTemplate(
             fkeys=fkeys,
@@ -186,7 +196,9 @@ if __name__ == "__main__":
             mi_topk=100,
             base_tpe_budget=400,
             turn_on_mi=True,
-            seed=seed
+            turn_on_mapping_func=False,
+            seed=seed,
+            query_template_num=10
         )
         print((seed, optimal_query_list))
         all_optimal_query_list.append((seed, optimal_query_list))
