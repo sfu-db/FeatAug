@@ -16,38 +16,17 @@ from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
 
+sys.path.append("./")
 sys.path.append("../")
-
-from sqlgen.sqlgen_pnas_hyperopt_onehot_encoding_multi_query_template import QueryTemplate, SQLGen
 
 sys.path.insert(1, "../exp")
 
-
-# def load_data():
-#     path = "../exp_data/Tmall/"
-#     train_data = pd.read_csv(os.path.join(path, "train_data.csv"))
-#     test_data = pd.read_csv(os.path.join(path, "test_data.csv"))
-#     user_log = pd.read_csv(os.path.join(path, "user_log.csv"))
-#     # print(len(user_log))
-#
-#     train_data = train_data.drop(train_data.columns[0], axis=1)
-#     train_labels = train_data["label"]
-#     train_data = train_data.drop(columns=["label"])
-#
-#     test_data = test_data.drop(test_data.columns[0], axis=1)
-#     test_labels = test_data["label"]
-#     test_data = test_data.drop(columns=["label"])
-#
-#     user_log = user_log.drop(user_log.columns[0], axis=1)
-#     # data = pd.concat([train_data, test_data])
-#     # print(len(user_log))
-#     # print("Train true label:", len(train_data[train_data['label'] == 1]), 'Train false label:',
-#     #       len(train_data[train_data['label'] == 0]))
-#     # print("Test true label:", len(test_data[test_data['label'] == 1]), 'Test false label:',
-#     #       len(test_data[test_data['label'] == 0]))
-#     print(test_labels.shape)
-#     return train_data, train_labels, test_data, test_labels, user_log
-
+from feataug.feataug_pnas_hyperopt_onehot_encoding_multi_query_template import QueryTemplate, SQLGen
+# from feataug.feataug_with_spearman_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_with_pearson_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_random import QueryTemplate, SQLGen
+# from feataug.feataug_with_lr_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_without_query_template_identification import QueryTemplate, SQLGen
 
 def load_data():
     path = "../exp_data/Tmall/"
@@ -83,9 +62,6 @@ def evaluate_test_data(
     train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model="rf"
 ):
     for query in optimal_query_list:
-        # arg_list = []
-        # for key in query["param"]:
-        #     arg_list.append(query["param"][key])
         new_feature, join_keys = sqlgen_task.generate_new_feature(arg_dict=query["param"])
         train_data = train_data.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys
@@ -117,17 +93,23 @@ if __name__ == "__main__":
     ml_model = args.ml_model
 
     train_data, train_labels, valid_data, valid_labels, test_data, test_labels, user_log = load_data()
-    seed_list = [0, 42, 89, 550, 572, 1024, 3709]
+    seed_list = [0, 42, 89, 550, 572, 1024, 3709, 97, 119]
     test_score_list = []
 
     fkeys = ["user_id", "merchant_id"]
-    # fkeys = ["user_id"]
     agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "VAR_SAMP", "STDDEV_POP", "STDDEV_SAMP", "ENTROPY", "KURTOSIS", "MODE", "MAD", "MEDIAN"]
     agg_attrs = ["merchant_id", "brand_id", "action_type", "age_range", "cat_id", "user_id"]
     predicate_attrs = ["time_stamp", "age_range", "action_type", "cat_id", "brand_id"]
 
-    # predicate_attrs = ['time_stamp']
-    # predicate_attrs = []
+
+    print("Action type length:")
+    print(len([str(x) for x in user_log["action_type"].unique()]))
+    print("Timestamp length:")
+    print(len([str(x) for x in user_log["time_stamp"].unique()] + ["None"]))
+
+    print("Age_range length:")
+    print(len([str(x) for x in user_log["age_range"].unique()] + ["None"]))
+
     groupby_keys = fkeys
     predicate_attr_types = {
         "gender": {
@@ -157,21 +139,10 @@ if __name__ == "__main__":
             "choices": [str(x) for x in user_log["brand_id"].unique()],
         },
     }
-    # query_template_size = 1
-    # for attr in predicate_attrs:
-    #     if predicate_attr_types[attr]["type"] == 'categorical':
-    #         query_template_size = query_template_size * len(predicate_attr_types[attr]["choices"])
-    #     elif predicate_attr_types[attr]["type"] == 'datetime':
-    #         query_template_size = query_template_size * len(predicate_attr_types[attr]["choices"]) * len(predicate_attr_types[attr]["choices"])
-    #     elif predicate_attr_types[attr]["type"] == 'int':
-    #         query_template_size = query_template_size * int(predicate_attr_types[attr]["max"] - predicate_attr_types[attr]["min"])
-    #     elif predicate_attr_types[attr]["type"] == 'float':
-    #         query_template_size = query_template_size * int(int(predicate_attr_types[attr]["max"] - predicate_attr_types[attr]["min"]) / 0.1)
-    # print(f"Max number of queries each query template: {query_template_size}")
 
     time_list = []
     all_optimal_query_list = []
-    for seed in seed_list[:1]:
+    for seed in seed_list[7:8]:
         start = time.time()
         query_template = QueryTemplate(
             fkeys=fkeys,
@@ -196,26 +167,38 @@ if __name__ == "__main__":
             relevant_table=user_log,
         )
 
+        # With all optimizations
         print(f'seed: {seed}')
         optimal_query_list = sqlgen_task.optimize(
             ml_model=ml_model,
             #metric="f1",
             outer_budget=5,
-            mi_budget=5000,
+            mi_budget=200,
             mi_topk=100,
-            base_tpe_budget=400,
+            base_tpe_budget=40,
             turn_on_mi=True,
             turn_on_mapping_func=False,
             seed=seed,
             query_template_num=8
         )
+
+        # Ablation study: without mi
+        # print(f'seed: {seed}')
+        # optimal_query_list = sqlgen_task.optimize(
+        #     ml_model=ml_model,
+        #     #metric="f1",
+        #     outer_budget=5,
+        #     mi_budget=5000,
+        #     mi_topk=0,
+        #     base_tpe_budget=140,
+        #     turn_on_mi=False,
+        #     turn_on_mapping_func=False,
+        #     seed=seed,
+        #     query_template_num=8
+        # )
+
         print((seed, optimal_query_list))
         all_optimal_query_list.append((seed, optimal_query_list))
-        test_score = evaluate_test_data(
-            train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model=ml_model
-        )
-        print(f"Test score of seed {seed}: {test_score}")
-        test_score_list.append(test_score)
         end = time.time()
         print(f"Running Time: {end - start}")
         time_list.append(end - start)

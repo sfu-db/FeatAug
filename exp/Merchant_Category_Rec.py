@@ -17,11 +17,17 @@ from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
 
+sys.path.append("./")
 sys.path.append("../")
 
-from sqlgen.sqlgen_pnas_hyperopt_onehot_encoding_multi_query_template import QueryTemplate, SQLGen
-
 sys.path.insert(1, "../exp")
+
+from feataug.feataug_pnas_hyperopt_onehot_encoding_multi_query_template import QueryTemplate, SQLGen
+# from feataug.feataug_with_spearman_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_with_pearson_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_random import QueryTemplate, SQLGen
+# from feataug.feataug_with_lr_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_without_query_template_identification import QueryTemplate, SQLGen
 
 def load_data():
     train = pd.read_csv("../exp_data/Merchant_Category_Rec/train.csv")
@@ -73,9 +79,6 @@ def evaluate_test_data(
     train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model="rf"
 ):
     for query in optimal_query_list:
-        # arg_list = []
-        # for key in query["param"]:
-        #     arg_list.append(query["param"][key])
         new_feature, join_keys = sqlgen_task.generate_new_feature(arg_dict=query["param"])
         train_data = train_data.merge(
             new_feature, how="left", left_on=join_keys, right_on=join_keys
@@ -110,11 +113,10 @@ if __name__ == "__main__":
     ml_model = args.ml_model
 
     train_data, train_labels, valid_data, valid_labels, test_data, test_labels, user_log = load_data()
-    seed_list = [0, 42, 89, 550, 572, 1024, 3709]
+    seed_list = [0, 42, 89, 550, 572, 1024, 3709, 97, 119]
     test_score_list = []
 
     fkeys = ["card_id"]
-    # fkeys = ["user_id"]
     agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "VAR_SAMP", "STDDEV_POP", "STDDEV_SAMP", "ENTROPY", "KURTOSIS", "MODE", "MAD", "MEDIAN"]
     agg_attrs = ['authorized_flag', 'city_id_x', 'category_1_x',
        'installments', 'category_3', 'merchant_category_id_x', 'merchant_id',
@@ -129,10 +131,7 @@ if __name__ == "__main__":
        'category_2_y']
     random.seed(42)
     predicate_attrs = random.sample(agg_attrs, 15)
-    print(predicate_attrs)
 
-    # predicate_attrs = ['time_stamp']
-    # predicate_attrs = []
     groupby_keys = fkeys
     predicate_attr_types = {
         'purchase_date': {
@@ -162,7 +161,7 @@ if __name__ == "__main__":
 
     time_list = []
     all_optimal_query_list = []
-    for seed in seed_list[:1]:
+    for seed in seed_list[7:8]:
         start = time.time()
         query_template = QueryTemplate(
             fkeys=fkeys,
@@ -187,26 +186,38 @@ if __name__ == "__main__":
             relevant_table=user_log,
         )
 
+        # with all optimizations
+        # print(f'seed: {seed}')
+        # optimal_query_list = sqlgen_task.optimize(
+        #     ml_model=ml_model,
+        #     metric='root_mean_squared_error',
+        #     outer_budget=5,
+        #     mi_budget=200,
+        #     mi_topk=50,
+        #     base_tpe_budget=40,
+        #     turn_on_mi=True,
+        #     turn_on_mapping_func=False,
+        #     seed=seed,
+        #     query_template_num=8
+        # )
+
+        # Ablation study: without mi
         print(f'seed: {seed}')
         optimal_query_list = sqlgen_task.optimize(
             ml_model=ml_model,
             metric='root_mean_squared_error',
             outer_budget=5,
-            mi_budget=5000,
-            mi_topk=100,
-            base_tpe_budget=400,
-            turn_on_mi=True,
+            mi_budget=200,
+            mi_topk=0,
+            base_tpe_budget=90,
+            turn_on_mi=False,
             turn_on_mapping_func=False,
             seed=seed,
-            query_template_num=10
+            query_template_num=8
         )
+
         print((seed, optimal_query_list))
         all_optimal_query_list.append((seed, optimal_query_list))
-        test_score = evaluate_test_data(
-            train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model=ml_model
-        )
-        print(f"Test score of seed {seed}: {test_score}")
-        test_score_list.append(test_score)
         end = time.time()
         print(f"Running Time: {end - start}")
         time_list.append(end - start)

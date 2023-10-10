@@ -24,11 +24,12 @@ from sklearn.feature_selection import mutual_info_classif, mutual_info_regressio
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, f1_score, mean_squared_error
 from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from sklearn.utils.class_weight import compute_sample_weight
 
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
 from hyperopt.fmin import space_eval
 
-from deepctr.models import DeepFM
+from deepctr.models import DeepFM, DCNMix
 from deepctr.feature_column import SparseFeat, DenseFeat,get_feature_names
 
 warnings.filterwarnings("ignore")
@@ -141,7 +142,7 @@ class SQLGen(object):
         temp_mi_score_empty_set = 0
         for temp_seed in seed_list:
             trials = Trials()
-            best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=500, trials=trials,
+            best = fmin(fn=self._lr_proxy_objective_func, space=fspace, algo=tpe.suggest, max_evals=500, trials=trials,
                         rstate=np.random.default_rng(temp_seed),show_progressbar=False)
             temp_best_mi_value = trials.best_trial['result']['loss']
             # temp_best_mi_value = best_value
@@ -161,7 +162,7 @@ class SQLGen(object):
             temp_mi_score = 0
             for temp_seed in seed_list:
                 trials = Trials()
-                best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=500,
+                best = fmin(fn=self._lr_proxy_objective_func, space=fspace, algo=tpe.suggest, max_evals=500,
                             trials=trials, rstate=np.random.default_rng(temp_seed),show_progressbar=False)
                 temp_best_mi_value = trials.best_trial['result']['loss']
 
@@ -241,7 +242,7 @@ class SQLGen(object):
                 temp_mi_score = 0
                 for temp_seed in seed_list:
                     trials = Trials()
-                    best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=500,
+                    best = fmin(fn=self._lr_proxy_objective_func, space=fspace, algo=tpe.suggest, max_evals=500,
                                 trials=trials, rstate=np.random.default_rng(temp_seed),show_progressbar=False)
                     temp_best_mi_value = trials.best_trial['result']['loss']
                         # temp_best_mi_value = best_value
@@ -286,14 +287,25 @@ class SQLGen(object):
             self.query_template.predicate_attrs = query_template["predicate_attrs"]
             self.query_template.predicate_attrs_type = query_template["predicate_attrs_type"]
 
-            fspace = self._define_search_space()
-            if turn_on_mi and mi_topk > 0:
-                trials = Trials()
-                best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=mi_budget,
-                            trials=trials, rstate=np.random.default_rng(seed), show_progressbar=False)
-                topk_mi_trials = self._rank_trials(trials=trials, search_space=fspace)[:mi_topk]
+            # fspace = self._define_search_space()
+            # if turn_on_mi and mi_topk > 0:
+            #     trials = Trials()
+            #     best = fmin(fn=self._lr_proxy_objective_func, space=fspace, algo=tpe.suggest, max_evals=mi_budget,
+            #                 trials=trials, rstate=np.random.default_rng(seed), show_progressbar=False)
+            #     topk_mi_trials = self._rank_trials(trials=trials, search_space=fspace)[:mi_topk]
 
             while outer_budget_single_query_template > 0:
+
+                # Evaluate LR when injecting each feature
+                fspace = self._define_search_space()
+                if turn_on_mi and mi_topk > 0:
+                    trials = Trials()
+                    # best = fmin(fn=self._mi_objective_func, space=fspace, algo=tpe.suggest, max_evals=mi_budget,
+                    #             trials=trials, rstate=np.random.default_rng(seed), show_progressbar=False)
+                    best = fmin(fn=self._lr_proxy_objective_func, space=fspace, algo=tpe.suggest, max_evals=mi_budget,
+                                 trials=trials, rstate=np.random.default_rng(seed), show_progressbar=False)
+                    topk_mi_trials = self._rank_trials(trials=trials, search_space=fspace)[:mi_topk]
+
                 start = time.time()
                 observed_query_list = []
                 if turn_on_mi and mi_topk > 0:
@@ -312,13 +324,15 @@ class SQLGen(object):
 
                 warm_start_trials = Trials()
                 for observed_query in observed_query_list:
-                    hyperopt_trial = Trials().new_trial_docs(
-                        tids=[observed_query["trial"]["tid"]],
-                        specs=[observed_query["trial"]["spec"]],
-                        results=[observed_query["trial"]["result"]],
-                        miscs=[observed_query["trial"]["misc"]]
-                    )
-                    warm_start_trials.insert_trial_docs(hyperopt_trial)
+                    #pdb.set_trace()
+                    # hyperopt_trial = Trials().new_trial_docs(
+                    #     tids=[observed_query["trial"]["tid"]],
+                    #     specs=[observed_query["trial"]["spec"]],
+                    #     results=[observed_query["trial"]["result"]],
+                    #     miscs=[observed_query["trial"]["misc"]]
+                    # )
+                    hyperopt_trial = observed_query["trial"]
+                    warm_start_trials.insert_trial_doc(hyperopt_trial)
                     warm_start_trials.refresh()
                 best = fmin(fn=self._objective_func, space=fspace, algo=tpe.suggest, max_evals=(base_tpe_budget + mi_topk),
                             trials=warm_start_trials, rstate=np.random.default_rng(seed), show_progressbar=False)
@@ -334,36 +348,36 @@ class SQLGen(object):
                     outer_budget_single_query_template -= end - start
 
                 new_feature, join_keys = self._generate_new_feature(arg_dict=self.optimal_query_list[-1]["param"])
-                self.base_table = self.base_table.merge(
-                    new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe_" + str(len(self.optimal_query_list)))
-                )
-                self.valid_table = self.valid_table.merge(
-                    new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe_" + str(len(self.optimal_query_list)))
-                )
-                self.test_table = self.test_table.merge(
-                    new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe_" + str(len(self.optimal_query_list)))
-                )
                 # self.base_table = self.base_table.merge(
-                #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+                #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe" + str(len(self.optimal_query_list)))
                 # )
                 # self.valid_table = self.valid_table.merge(
-                #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+                #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe" + str(len(self.optimal_query_list)))
                 # )
                 # self.test_table = self.test_table.merge(
-                #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+                #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe" + str(len(self.optimal_query_list)))
                 # )
+                self.base_table = self.base_table.merge(
+                    new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+                )
+                self.valid_table = self.valid_table.merge(
+                    new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+                )
+                self.test_table = self.test_table.merge(
+                    new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+                )
 
                 print(f"Len train cols: {len(self.base_table.columns.values.tolist())}, Train cols: {self.base_table.columns.values.tolist()}")
 
-                # train_cols = self.base_table.columns.values.tolist()
-                # train_to_drop = [x for x in train_cols if x.endswith('_newf')]
-                # self.base_table = self.base_table.drop(columns=train_to_drop)
-                # valid_cols = self.valid_table.columns.values.tolist()
-                # valid_to_drop = [x for x in valid_cols if x.endswith('_newf')]
-                # self.valid_table = self.valid_table.drop(columns=valid_to_drop)
-                # test_cols = self.test_table.columns.values.tolist()
-                # test_to_drop = [x for x in test_cols if x.endswith('_newf')]
-                # self.test_table = self.test_table.drop(columns=test_to_drop)
+                train_cols = self.base_table.columns.values.tolist()
+                train_to_drop = [x for x in train_cols if x.endswith('_newf')]
+                self.base_table = self.base_table.drop(columns=train_to_drop)
+                valid_cols = self.valid_table.columns.values.tolist()
+                valid_to_drop = [x for x in valid_cols if x.endswith('_newf')]
+                self.valid_table = self.valid_table.drop(columns=valid_to_drop)
+                test_cols = self.test_table.columns.values.tolist()
+                test_to_drop = [x for x in test_cols if x.endswith('_newf')]
+                self.test_table = self.test_table.drop(columns=test_to_drop)
 
                 print(f"Top {outer_budget_single_query_template} validation score: {self.optimal_query_list[-1]['value']}!")
                 test_score = self._evaluate_test_data()
@@ -480,10 +494,10 @@ class SQLGen(object):
         #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe_" + str(len(self.optimal_query_list)))
         # )
         new_train_data = self.base_table.merge(
-            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
         )
         new_valid_data = self.valid_table.merge(
-            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
         )
         new_train_data = new_train_data.fillna(0)
         new_valid_data = new_valid_data.fillna(0)
@@ -494,20 +508,20 @@ class SQLGen(object):
         # print(f"new_train_data cols:{new_train_data.columns.values.tolist()}")
         # print(f"new_valid_data cols:{new_valid_data.columns.values.tolist()}")
 
-        # new_train_cols = new_train_data.columns.values.tolist()
-        # new_train_to_drop = [x for x in new_train_cols if x.endswith('_newf')]
-        # new_train_data = new_train_data.drop(columns=new_train_to_drop)
+        new_train_cols = new_train_data.columns.values.tolist()
+        new_train_to_drop = [x for x in new_train_cols if x.endswith('_newf')]
+        new_train_data = new_train_data.drop(columns=new_train_to_drop)
 
-        # new_valid_cols = new_valid_data.columns.values.tolist()
-        # new_valid_to_drop = [x for x in new_valid_cols if x.endswith('_newf')]
-        # new_valid_data = new_valid_data.drop(columns=new_valid_to_drop)
+        new_valid_cols = new_valid_data.columns.values.tolist()
+        new_valid_to_drop = [x for x in new_valid_cols if x.endswith('_newf')]
+        new_valid_data = new_valid_data.drop(columns=new_valid_to_drop)
 
         # validation score
         if self.ml_model == "xgb":
             if self.task_type == "classification":
-                clf = XGBClassifier(random_state=0)
+                clf = XGBClassifier(random_state=0, n_jobs=5)
             else:
-                clf = XGBRegressor(random_state=0)
+                clf = XGBRegressor(random_state=0, n_jobs=5)
             # scores = cross_validate(
             #     clf,
             #     new_train_data,
@@ -518,7 +532,7 @@ class SQLGen(object):
             #     n_jobs=-1,
             #     return_estimator=True,
             # )
-            clf.fit(new_train_data, self.labels.to_frame())
+            clf.fit(new_train_data, self.labels.to_frame(), sample_weight=compute_sample_weight("balanced", self.labels.to_frame()))
             new_valid_pred = clf.predict(new_valid_data)
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.to_frame(), new_valid_pred)
@@ -555,7 +569,7 @@ class SQLGen(object):
             if self.task_type == "classification":
                 clf = LogisticRegression(random_state = 0, penalty='l2', class_weight='balanced')
             else:
-                clf = LinearRegression(random_state = 0)
+                clf = LinearRegression()
             # scores = cross_validate(
             #     clf,
             #     new_train_data,
@@ -599,12 +613,17 @@ class SQLGen(object):
             elif self.metric == 'root_mean_squared_error':
                 score = mean_squared_error(self.valid_labels.values.ravel(), new_valid_pred)
                 score = math.sqrt(score)
-        elif self.ml_model in ['deepfm']:
+        elif self.ml_model in ['deepfm', 'dcnv2']:
             all_train = pd.concat([new_train_data, new_valid_data])
             all_train_labels = pd.concat([self.labels, self.valid_labels])
             all_valid = new_valid_data
 
-            #tf.random.set_seed(1024)
+            # train with only train data
+            # all_train = new_train_data
+            # all_train_labels = self.labels
+            # all_valid = new_valid_data
+
+            tf.random.set_seed(1024)
             sparse_features = []
             dense_features = all_train.columns.values.tolist()
 
@@ -625,18 +644,27 @@ class SQLGen(object):
             all_train_dic = {name:all_train[name].values for name in feature_names}
             all_valid_dic = {name:all_valid[name].values for name in feature_names}
 
-            # if self.ml_model == 'deepfm':
-            #     model = DeepFM(linear_feature_columns, dnn_feature_columns, task='regression')
-            # model.compile("adam", "mse", metrics=['mse'], )
-            if self.ml_model == 'deepfm':
-                model = DeepFM(linear_feature_columns, dnn_feature_columns, task='binary')
-            model.compile("adam", "binary_crossentropy", metrics=['binary_crossentropy'], )
+            if self.task_type == "classification":
+                if self.ml_model == 'deepfm':
+                    model = DeepFM(linear_feature_columns, dnn_feature_columns, task='binary', seed=1024)
+                elif self.ml_model == 'dcnv2':
+                    model = DCNMix(linear_feature_columns, dnn_feature_columns, task='binary', seed=1024, dnn_dropout=0.5)
+                model.compile("adam", "binary_crossentropy", metrics=['binary_crossentropy'], )
+            else:
+                if self.ml_model == 'deepfm':
+                    model = DeepFM(linear_feature_columns, dnn_feature_columns, task='regression', seed=1024)
+                elif self.ml_model == 'dcnv2':
+                    model = DCNMix(linear_feature_columns, dnn_feature_columns, task='regression', seed=1024, dnn_dropout=0.5)
+                model.compile("adam", "mse", metrics=['mse'], )
 
             history = model.fit(all_train_dic, all_train_labels.values,
                                 batch_size=256, epochs=10, verbose=2, validation_split=0.25, )
             pred_valid = model.predict(all_valid_dic, batch_size=256)
-            score = roc_auc_score(self.valid_labels, pred_valid)
-            #score = math.sqrt(mean_squared_error(self.valid_labels, pred_valid))
+
+            if self.task_type == "classification":
+                score = roc_auc_score(self.valid_labels, pred_valid)
+            else:
+                score = math.sqrt(mean_squared_error(self.valid_labels, pred_valid))
 
         valid_score = score
         if self.task_type == "classification":
@@ -645,11 +673,13 @@ class SQLGen(object):
         return valid_score
 
     def _mi_objective_func(self, params):
+
+        ##### Take MI as Proxy #####
         new_feature, join_keys = self._generate_new_feature(arg_dict=params)
         fkeys_and_join_keys = list(set(self.query_template.fkeys).union(set(join_keys)))
-        df_with_fkeys_and_join_keys = self.base_table[fkeys_and_join_keys]
+        df_with_fkeys_and_join_keys = copy.deepcopy(self.base_table[fkeys_and_join_keys])
         new_feature_after_join = df_with_fkeys_and_join_keys.merge(
-            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', '_newf')
+            new_feature, how="left", left_on=join_keys, right_on=join_keys
         )
         new_feature_after_join = new_feature_after_join.drop(
             columns=fkeys_and_join_keys
@@ -672,6 +702,138 @@ class SQLGen(object):
             mi_score = r_regression(new_feature_after_join, self.labels)
         mi_score = -1 * mi_score[0]
 
+        ##### Take LR result as Proxy #####
+        # new_feature, join_keys = self._generate_new_feature(arg_dict=params)
+        # new_train_data = self.base_table.merge(
+        #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
+        # )
+        # new_valid_data = self.valid_table.merge(
+        #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
+        # )
+        # new_train_data = new_train_data.fillna(0)
+        # new_valid_data = new_valid_data.fillna(0)
+        # if not self.train_with_join_keys:
+        #     new_train_data = new_train_data.drop(columns=self.query_template.fkeys)
+        #     new_valid_data = new_valid_data.drop(columns=self.query_template.fkeys)
+        # # print(f"new_train_data cols:{new_train_data.columns.values.tolist()}")
+        # # print(f"new_valid_data cols:{new_valid_data.columns.values.tolist()}")
+        
+        # new_train_cols = new_train_data.columns.values.tolist()
+        # new_train_to_drop = [x for x in new_train_cols if x.endswith('_newf')]
+        # new_train_data = new_train_data.drop(columns=new_train_to_drop)
+
+        # new_valid_cols = new_valid_data.columns.values.tolist()
+        # new_valid_to_drop = [x for x in new_valid_cols if x.endswith('_newf')]
+        # new_valid_data = new_valid_data.drop(columns=new_valid_to_drop)
+
+        # if self.task_type == "classification":
+        #     clf = LogisticRegression(random_state = 0, penalty='l2', class_weight='balanced')
+        # else:
+        #     clf = LinearRegression()
+        # clf.fit(new_train_data, self.labels.values.ravel())
+        # new_valid_pred = clf.predict(new_valid_data)
+        # if self.metric == 'roc_auc':
+        #     mi_score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
+        # elif self.metric == 'f1_macro':
+        #     mi_score = f1_score(self.valid_labels.values.ravel(), new_valid_pred, average='macro')
+        # elif self.metric == 'root_mean_squared_error':
+        #     mi_score = mean_squared_error(self.valid_labels.values.ravel(), new_valid_pred)
+        #     mi_score = math.sqrt(score)
+
+        # mi_score = -1 * mi_score
+
+        return mi_score
+
+    def _spearman_objective_func(self, params):
+
+        ##### Take Spearman as Proxy #####
+        new_feature, join_keys = self._generate_new_feature(arg_dict=params)
+        fkeys_and_join_keys = list(set(self.query_template.fkeys).union(set(join_keys)))
+        df_with_fkeys_and_join_keys = copy.deepcopy(self.base_table[fkeys_and_join_keys])
+        new_feature_after_join = df_with_fkeys_and_join_keys.merge(
+            new_feature, how="left", left_on=join_keys, right_on=join_keys
+        )
+        new_feature_after_join = new_feature_after_join.drop(
+            columns=fkeys_and_join_keys
+        )
+        new_feature_after_join = new_feature_after_join.fillna(0)
+
+        from scipy import stats
+        mi_score = stats.spearmanr(new_feature_after_join, self.labels)
+        mi_score = -1 * mi_score.statistic
+
+        return mi_score
+
+    def _lr_proxy_objective_func(self, params):
+
+        ##### Take MI as Proxy #####
+        # new_feature, join_keys = self._generate_new_feature(arg_dict=params)
+        # fkeys_and_join_keys = list(set(self.query_template.fkeys).union(set(join_keys)))
+        # df_with_fkeys_and_join_keys = copy.deepcopy(self.base_table[fkeys_and_join_keys])
+        # new_feature_after_join = df_with_fkeys_and_join_keys.merge(
+        #     new_feature, how="left", left_on=join_keys, right_on=join_keys
+        # )
+        # new_feature_after_join = new_feature_after_join.drop(
+        #     columns=fkeys_and_join_keys
+        # )
+        # new_feature_after_join = new_feature_after_join.fillna(0)
+
+        # # new_feature_after_join_cols = new_feature_after_join.columns.values.tolist()
+        # # to_drop = [x for x in new_feature_after_join_cols if x.endswith('_newf')]
+        # # new_feature_after_join = new_feature_after_join.drop(columns=to_drop)
+
+        # if self.task_type == 'classification':
+        #     mi_score = mutual_info_classif(
+        #         new_feature_after_join, self.labels, random_state=0
+        #     )
+        # else:
+        #     # mi_score = mutual_info_regression(
+        #     #     new_feature_after_join, self.labels, random_state=0
+        #     # )
+        #     # pearson correlation
+        #     mi_score = r_regression(new_feature_after_join, self.labels)
+        # mi_score = -1 * mi_score[0]
+
+        ##### Take LR result as Proxy #####
+        new_feature, join_keys = self._generate_new_feature(arg_dict=params)
+        new_train_data = self.base_table.merge(
+            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
+        )
+        new_valid_data = self.valid_table.merge(
+            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
+        )
+        new_train_data = new_train_data.fillna(0)
+        new_valid_data = new_valid_data.fillna(0)
+        if not self.train_with_join_keys:
+            new_train_data = new_train_data.drop(columns=self.query_template.fkeys)
+            new_valid_data = new_valid_data.drop(columns=self.query_template.fkeys)
+        # print(f"new_train_data cols:{new_train_data.columns.values.tolist()}")
+        # print(f"new_valid_data cols:{new_valid_data.columns.values.tolist()}")
+        
+        new_train_cols = new_train_data.columns.values.tolist()
+        new_train_to_drop = [x for x in new_train_cols if x.endswith('_newf')]
+        new_train_data = new_train_data.drop(columns=new_train_to_drop)
+
+        new_valid_cols = new_valid_data.columns.values.tolist()
+        new_valid_to_drop = [x for x in new_valid_cols if x.endswith('_newf')]
+        new_valid_data = new_valid_data.drop(columns=new_valid_to_drop)
+
+        if self.task_type == "classification":
+            clf = LogisticRegression(random_state = 0, penalty='l2', class_weight='balanced')
+        else:
+            clf = LinearRegression()
+        clf.fit(new_train_data, self.labels.values.ravel())
+        new_valid_pred = clf.predict(new_valid_data)
+        if self.metric == 'roc_auc':
+            mi_score = roc_auc_score(self.valid_labels.values.ravel(), new_valid_pred)
+        elif self.metric == 'f1_macro':
+            mi_score = f1_score(self.valid_labels.values.ravel(), new_valid_pred, average='macro')
+        elif self.metric == 'root_mean_squared_error':
+            mi_score = mean_squared_error(self.valid_labels.values.ravel(), new_valid_pred)
+            mi_score = math.sqrt(score)
+
+        mi_score = -1 * mi_score
+
         return mi_score
 
     def _get_real_evaluation(self, param):
@@ -686,10 +848,10 @@ class SQLGen(object):
         #     new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newfe_" + str(len(self.optimal_query_list)))
         # )
         new_train_data = self.base_table.merge(
-            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
         )
         new_valid_data = self.valid_table.merge(
-            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf")
+            new_feature, how="left", left_on=join_keys, right_on=join_keys, suffixes=('', "_newf"), copy=False
         )
         new_train_data = new_train_data.fillna(0)
         new_valid_data = new_valid_data.fillna(0)
@@ -699,22 +861,22 @@ class SQLGen(object):
         # print(f"new_train_data cols:{new_train_data.columns.values.tolist()}")
         # print(f"new_valid_data cols:{new_valid_data.columns.values.tolist()}")
         
-        # new_train_cols = new_train_data.columns.values.tolist()
-        # new_train_to_drop = [x for x in new_train_cols if x.endswith('_newf')]
-        # new_train_data = new_train_data.drop(columns=new_train_to_drop)
+        new_train_cols = new_train_data.columns.values.tolist()
+        new_train_to_drop = [x for x in new_train_cols if x.endswith('_newf')]
+        new_train_data = new_train_data.drop(columns=new_train_to_drop)
 
-        # new_valid_cols = new_valid_data.columns.values.tolist()
-        # new_valid_to_drop = [x for x in new_valid_cols if x.endswith('_newf')]
-        # new_valid_data = new_valid_data.drop(columns=new_valid_to_drop)
+        new_valid_cols = new_valid_data.columns.values.tolist()
+        new_valid_to_drop = [x for x in new_valid_cols if x.endswith('_newf')]
+        new_valid_data = new_valid_data.drop(columns=new_valid_to_drop)
       
         #new_train, new_valid, new_train_labels, new_valid_labels = train_test_split(new_train_data, self.labels, test_size=0.25, random_state=42)
 
         # validation score
         if self.ml_model == "xgb":
             if self.task_type == "classification":
-                clf = XGBClassifier(random_state=0)
+                clf = XGBClassifier(random_state=0, n_jobs=5)
             else:
-                clf = XGBRegressor(random_state=0)
+                clf = XGBRegressor(random_state=0, n_jobs=5)
             # scores = cross_validate(
             #     clf,
             #     new_train_data,
@@ -725,7 +887,7 @@ class SQLGen(object):
             #     n_jobs=-1,
             #     return_estimator=True,
             # )
-            clf.fit(new_train_data, self.labels.to_frame())
+            clf.fit(new_train_data, self.labels.to_frame(), sample_weight=compute_sample_weight("balanced", self.labels.to_frame()))
             new_valid_pred = clf.predict(new_valid_data)
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.valid_labels.to_frame(), new_valid_pred)
@@ -762,7 +924,7 @@ class SQLGen(object):
             if self.task_type == "classification":
                 clf = LogisticRegression(random_state = 0, penalty='l2', class_weight='balanced')
             else:
-                clf = LinearRegression(random_state = 0)
+                clf = LinearRegression()
             # scores = cross_validate(
             #     clf,
             #     new_train_data,
@@ -806,12 +968,17 @@ class SQLGen(object):
             elif self.metric == 'root_mean_squared_error':
                 score = mean_squared_error(self.valid_labels.values.ravel(), new_valid_pred)
                 score = math.sqrt(score)
-        elif self.ml_model in ['deepfm']:
+        elif self.ml_model in ['deepfm', 'dcnv2']:
             all_train = pd.concat([new_train_data, new_valid_data])
             all_train_labels = pd.concat([self.labels, self.valid_labels])
             all_valid = new_valid_data
 
-            #tf.random.set_seed(1024)
+            # train with only train data
+            # all_train = new_train_data
+            # all_train_labels = self.labels
+            # all_valid = new_valid_data
+
+            tf.random.set_seed(1024)
             sparse_features = []
             dense_features = all_train.columns.values.tolist()
 
@@ -832,18 +999,27 @@ class SQLGen(object):
             all_train_dic = {name:all_train[name].values for name in feature_names}
             all_valid_dic = {name:all_valid[name].values for name in feature_names}
 
-            # if self.ml_model == 'deepfm':
-            #     model = DeepFM(linear_feature_columns, dnn_feature_columns, task='regression')
-            # model.compile("adam", "mse", metrics=['mse'], )
-            if self.ml_model == 'deepfm':
-                model = DeepFM(linear_feature_columns, dnn_feature_columns, task='binary')
-            model.compile("adam", "binary_crossentropy", metrics=['binary_crossentropy'], )
+            if self.task_type == "classification":
+                if self.ml_model == 'deepfm':
+                    model = DeepFM(linear_feature_columns, dnn_feature_columns, task='binary', seed=1024)
+                elif self.ml_model == 'dcnv2':
+                    model = DCNMix(linear_feature_columns, dnn_feature_columns, task='binary', seed=1024, dnn_dropout=0.5)
+                model.compile("adam", "binary_crossentropy", metrics=['binary_crossentropy'], )
+            else:
+                if self.ml_model == 'deepfm':
+                    model = DeepFM(linear_feature_columns, dnn_feature_columns, task='regression', seed=1024)
+                elif self.ml_model == 'dcnv2':
+                    model = DCNMix(linear_feature_columns, dnn_feature_columns, task='regression', seed=1024, dnn_dropout=0.5)
+                model.compile("adam", "mse", metrics=['mse'], )
 
             history = model.fit(all_train_dic, all_train_labels.values,
                                 batch_size=256, epochs=10, verbose=2, validation_split=0.25, )
             pred_valid = model.predict(all_valid_dic, batch_size=256)
-            score = roc_auc_score(self.valid_labels, pred_valid)
-            #score = math.sqrt(mean_squared_error(self.valid_labels, pred_valid))
+
+            if self.task_type == "classification":
+                score = roc_auc_score(self.valid_labels, pred_valid)
+            else:
+                score = math.sqrt(mean_squared_error(self.valid_labels, pred_valid))
 
         valid_score = score
         if self.task_type == "classification":
@@ -1144,9 +1320,9 @@ class SQLGen(object):
         # test score
         if self.ml_model == "xgb":
             if self.task_type == "classification":
-                clf = XGBClassifier(random_state=0)
+                clf = XGBClassifier(random_state=0, n_jobs=5)
             else:
-                clf = XGBRegressor(random_state=0)
+                clf = XGBRegressor(random_state=0, n_jobs=5)
             # scores = cross_validate(
             #     clf,
             #     new_train_data,
@@ -1157,7 +1333,7 @@ class SQLGen(object):
             #     n_jobs=-1,
             #     return_estimator=True,
             # )
-            clf.fit(train_data, train_labels)
+            clf.fit(train_data, train_labels, sample_weight=compute_sample_weight("balanced", train_labels))
             new_test_pred = clf.predict(new_test_data)
             if self.metric == 'roc_auc':
                 score = roc_auc_score(self.test_labels.to_frame(), new_test_pred)
@@ -1194,7 +1370,7 @@ class SQLGen(object):
             if self.task_type == "classification":
                 clf = LogisticRegression(random_state = 0, penalty='l2', class_weight='balanced')
             else:
-                clf = LinearRegression(random_state = 0)
+                clf = LinearRegression()
             # scores = cross_validate(
             #     clf,
             #     new_train_data,
@@ -1238,12 +1414,12 @@ class SQLGen(object):
             elif self.metric == 'root_mean_squared_error':
                 score = mean_squared_error(self.test_labels.values.ravel(), new_test_pred)
                 score = math.sqrt(score)
-        elif self.ml_model in ['deepfm']:
+        elif self.ml_model in ['deepfm', 'dcnv2']:
             all_train = pd.concat([new_train_data, new_valid_data])
             all_train_labels = pd.concat([self.labels, self.valid_labels])
             all_test = new_test_data
 
-            #tf.random.set_seed(1024)
+            tf.random.set_seed(1024)
             sparse_features = []
             dense_features = all_train.columns.values.tolist()
 
@@ -1264,18 +1440,27 @@ class SQLGen(object):
             all_train_dic = {name:all_train[name].values for name in feature_names}
             all_test_dic = {name:all_test[name].values for name in feature_names}
 
-            # if self.ml_model == 'deepfm':
-            #     model = DeepFM(linear_feature_columns, dnn_feature_columns, task='regression')
-            # model.compile("adam", "mse", metrics=['mse'], )
-            if self.ml_model == 'deepfm':
-                model = DeepFM(linear_feature_columns, dnn_feature_columns, task='binary')
-            model.compile("adam", "binary_crossentropy", metrics=['binary_crossentropy'], )
+            if self.task_type == "classification":
+                if self.ml_model == 'deepfm':
+                    model = DeepFM(linear_feature_columns, dnn_feature_columns, task='binary', seed=1024)
+                elif self.ml_model == 'dcnv2':
+                    model = DCNMix(linear_feature_columns, dnn_feature_columns, task='binary', seed=1024, dnn_dropout=0.5)
+                model.compile("adam", "binary_crossentropy", metrics=['binary_crossentropy'], )
+            else:
+                if self.ml_model == 'deepfm':
+                    model = DeepFM(linear_feature_columns, dnn_feature_columns, task='regression', seed=1024)
+                elif self.ml_model == 'dcnv2':
+                    model = DCNMix(linear_feature_columns, dnn_feature_columns, task='regression', seed=1024, dnn_dropout=0.5)
+                model.compile("adam", "mse", metrics=['mse'], )
 
             history = model.fit(all_train_dic, all_train_labels.values,
                                 batch_size=256, epochs=10, verbose=2, validation_split=0.25, )
             pred_test = model.predict(all_test_dic, batch_size=256)
-            score = roc_auc_score(self.test_labels, pred_test)
-            #score = math.sqrt(mean_squared_error(self.test_labels, pred_test))
+
+            if self.task_type == "classification":
+                score = roc_auc_score(self.test_labels, pred_test)
+            else:
+                score = math.sqrt(mean_squared_error(self.test_labels, pred_test))
 
         return score
     

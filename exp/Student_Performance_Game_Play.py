@@ -20,11 +20,17 @@ from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
 
+sys.path.append("./")
 sys.path.append("../")
-from sqlgen.sqlgen_pnas_hyperopt_onehot_encoding_multi_query_template import QueryTemplate, SQLGen
 
 sys.path.insert(1, "../exp")
 
+from feataug.feataug_pnas_hyperopt_onehot_encoding_multi_query_template import QueryTemplate, SQLGen
+# from feataug.feataug_with_spearman_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_with_pearson_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_random import QueryTemplate, SQLGen
+# from feataug.feataug_with_lr_proxy import QueryTemplate, SQLGen
+# from feataug.feataug_without_query_template_identification import QueryTemplate, SQLGen
 
 def load_all_data():
     path = "../exp_data/Student_Performance_Game_Play"
@@ -115,7 +121,7 @@ if __name__ == "__main__":
     ml_model = args.ml_model
     question_num = args.question_num
 
-    seed_list = [0, 42, 89, 550, 572, 1024, 3709]
+    seed_list = [0, 42, 89, 550, 572, 1024, 3709, 119, 97]
     log_all, train_all = load_all_data()
 
     data_number_of_each_question = []
@@ -130,6 +136,7 @@ if __name__ == "__main__":
         agg_funcs = ["SUM", "MIN", "MAX", "COUNT", "AVG", "APPROX_COUNT_DISTINCT", "VAR_POP", "VAR_SAMP", "STDDEV_POP", "STDDEV_SAMP", "ENTROPY", "KURTOSIS", "MODE", "MAD", "MEDIAN"]
         agg_attrs = ['session', 'elapsed_time', 'event_name', 'name', 'level', 'room_coor_x',
                      'room_coor_y', 'screen_coor_x', 'screen_coor_y', 'room_fqid']
+        # agg_attrs = [ 'name', 'level', 'room_coor_x']
         predicate_attrs = agg_attrs
         print(predicate_attrs)
         groupby_keys = fkeys
@@ -154,9 +161,14 @@ if __name__ == "__main__":
             "high": max(user_log['elapsed_time'].unique())
         }
 
+        print("Name length:")
+        print(len([str(x) for x in user_log['name'].unique()]))
+        print("room_coor_x length:")
+        print(len([str(x) for x in user_log['room_coor_x'].unique()] + ["None"]))
+
         time_list = []
         all_optimal_query_list = []
-        for seed in seed_list[:1]:
+        for seed in seed_list[8:]:
             start = time.time()
             query_template = QueryTemplate(
                 fkeys=fkeys,
@@ -181,26 +193,38 @@ if __name__ == "__main__":
                 relevant_table=user_log,
             )
 
+            # With all optimizations
             print(f'seed: {seed}')
             optimal_query_list = sqlgen_task.optimize(
-                ml_model=ml_model,
-                #metric="f1",
-                outer_budget=5,
-                mi_budget=5000,
-                mi_topk=100,
-                base_tpe_budget=400,
-                turn_on_mi=True,
-                turn_on_mapping_func=False,
-                seed=seed,
-                query_template_num=8
+               ml_model=ml_model,
+               #metric="f1",
+               outer_budget=5,
+               mi_budget=200,
+               mi_topk=50,
+               base_tpe_budget=40,
+               turn_on_mi=True,
+               turn_on_mapping_func=False,
+               seed=seed,
+               query_template_num=8
             )
+
+            # Ablation study: without mi
+            # print(f'seed: {seed}')
+            # optimal_query_list = sqlgen_task.optimize(
+            #     ml_model=ml_model,
+            #     #metric="f1",
+            #     outer_budget=5,
+            #     mi_budget=5000,
+            #     mi_topk=0,
+            #     base_tpe_budget=90,
+            #     turn_on_mi=False,
+            #     turn_on_mapping_func=False,
+            #     seed=seed,
+            #     query_template_num=8
+            # )
+
             print((seed, optimal_query_list))
             all_optimal_query_list.append((seed, optimal_query_list))
-            test_score = evaluate_test_data(
-                train_data, train_labels, test_data, test_labels, optimal_query_list, ml_model=ml_model
-            )
-            print(f"Test score of seed {seed}: {test_score}")
-            test_score_list.append(test_score)
             end = time.time()
             print(f"Running Time: {end - start}")
             time_list.append(end - start)
@@ -208,9 +232,3 @@ if __name__ == "__main__":
             print(query_list)
         for single_time in time_list:
             print(single_time)
-
-    # avg_score = 0
-    # for question_number in range(1, 19):
-    #     avg_score += (data_number_of_each_question[question_number] / sum(data_number_of_each_question)) * \
-    #                  score_of_each_question[question_number]
-    # print(f'Final Avg Score: {avg_score}')
