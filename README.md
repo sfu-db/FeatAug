@@ -30,6 +30,8 @@ poetry run python exp/instacart.py -m 'lr'
 ```
 The parameter **-m** means the classifier/regressor the users can choose:
 
+```
+
 'lr' -> Logistic Regression
 
 'rf' -> Random Forest
@@ -40,3 +42,4 @@ The parameter **-m** means the classifier/regressor the users can choose:
 
 'dcnv2' -> DCNV2 (https://arxiv.org/pdf/2008.13535.pdf)
 
+```
