@@ -5,8 +5,11 @@ This is the code repository of the paper "FeatAug: Automatic Feature Augmentatio
 ## Dataset Download
 
 **Tmall Dataset:** https://tianchi.aliyun.com/dataset/dataDetail?dataId=42
+
 **Instacart Dataset:** https://www.kaggle.com/c/instacart-marketbasket-analysis
+
 **Student Dataset:** https://www.kaggle.com/competitions/predict-studentperformance-from-game-play
+
 **Merchant Dataset:** https://www.kaggle.com/competitions/elo-merchant-category-recommendation
 
 ## How to Run Experiments
