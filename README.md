@@ -12,6 +12,10 @@ This is the code repository of the paper "FeatAug: Automatic Feature Augmentatio
 
 **Merchant Dataset:** https://www.kaggle.com/competitions/elo-merchant-category-recommendation
 
+**Covtype Dataset:** https://archive.ics.uci.edu/dataset/31/covertype
+
+**Household Dataset:** https://www.kaggle.com/c/costa-rican-household-poverty-prediction/data
+
 ## How to Run Experiments
 
 #### Step 1: Install Poetry
